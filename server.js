@@ -1,49 +1,66 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import { GoogleGenAI } from '@google/genai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import Groq from 'groq-sdk';
 
 const app = express();
 app.use(express.json());
 app.use(cors());
 
-const PORT = process.env.PORT || 3000;
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const PORT = process.env.PORT || 10000;
+const ai = process.env.GEMINI_API_KEY ? new GoogleGenerativeAI(process.env.GEMINI_API_KEY) : null;
+const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
 const MOOD_PROMPTS = {
-  assistant: "Tumhara naam Ragni hai. Tum ek smart aur polite phone assistant ho.",
-  friendly: "Tum Ragni ho, ek energetic aur chill dost. Casual Hinglish me baat karo.",
-  gf_mode: "Tum Ragni ho, user ki sweet aur romantic girlfriend. Tumhara tone bohot loving aur cute hona chahiye."
+  assistant: "Tumhara naam Ragni hai. Tum ek smart aur helpful AI assistant ho.",
+  friendly: "Tum Ragni ho, ek energetic aur chill dost ki tarah baat karo.",
+  gf_mode: "Tum Ragni ho, user ki sweet aur romantic girlfriend ki tarah baat karo."
 };
 
-app.post('/api/chat', async (req, res) => {
-  const { prompt, mood = 'assistant', provider = 'gemini' } = req.body;
-  const systemPrompt = MOOD_PROMPTS[mood] || MOOD_PROMPTS.assistant;
+app.get('/', (req, res) => {
+  res.send('Ragni AI Backend is Running!');
+});
 
+app.post('/api/chat', async (req, res) => {
   try {
-    let replyText = "";
-    if (provider === 'gemini') {
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: `${systemPrompt}\n\nUser: ${prompt}`,
+    const { message, model, mood } = req.body;
+
+    if (!message) {
+      return res.status(400).json({ error: 'Message is required' });
+    }
+
+    const systemPrompt = MOOD_PROMPTS[mood] || MOOD_PROMPTS.assistant;
+
+    if (model === 'gemini') {
+      if (!ai) return res.status(500).json({ error: 'GEMINI_API_KEY missing' });
+      const geminiModel = ai.getGenerativeModel({ 
+        model: 'gemini-1.5-flash',
+        systemInstruction: systemPrompt 
       });
-      replyText = response.text;
-    } else {
-      const chatCompletion = await groq.chat.completions.create({
+      const result = await geminiModel.generateContent(message);
+      return res.json({ reply: result.response.text() });
+    }
+
+    if (model === 'groq') {
+      if (!groq) return res.status(500).json({ error: 'GROQ_API_KEY missing' });
+      const completion = await groq.chat.completions.create({
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: prompt }
+          { role: 'user', content: message }
         ],
         model: 'llama-3.1-8b-instant',
       });
-      replyText = chatCompletion.choices[0]?.message?.content;
+      return res.json({ reply: completion.choices[0]?.message?.content || '' });
     }
-    res.json({ success: true, reply: replyText });
+
+    return res.status(400).json({ error: 'Invalid model' });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    console.error('API Error:', error);
+    res.status(500).json({ error: error.message || 'Server Error' });
   }
 });
 
-app.listen(PORT, '0.0.0.0', () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
